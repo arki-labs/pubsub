@@ -1,0 +1,188 @@
+{
+  "package": "@arki/pubsub",
+  "version": "0.2.0",
+  "entries": [
+    {
+      "subpath": ".",
+      "name": "CHANNEL_PATTERN",
+      "kind": "variable",
+      "signature": "export declare const CHANNEL_PATTERN: RegExp;",
+      "jsdocSummary": "A channel name: a Postgres identifier of 1 to 63 characters of `[a-z0-9_]`."
+    },
+    {
+      "subpath": ".",
+      "name": "MAX_PAYLOAD_BYTES",
+      "kind": "variable",
+      "signature": "export declare const MAX_PAYLOAD_BYTES = 7999;",
+      "jsdocSummary": "The largest payload, in UTF-8 bytes. Postgres NOTIFY refuses 8000 bytes or more, so the limit is 7999."
+    },
+    {
+      "subpath": ".",
+      "name": "OnMessage",
+      "kind": "type",
+      "signature": "export type OnMessage = (payload: string) => void;",
+      "jsdocSummary": "Called once per message on the channel it was given to."
+    },
+    {
+      "subpath": ".",
+      "name": "PubSub",
+      "kind": "type",
+      "signature": "export type PubSub = { /** Sends `payload` to the channel's subscribers now. Resolves once the backend accepted it. */ publish(channel: string, payload: string): Promise<void>; /** Resolves once the subscription is live: every later publish on `channel` reaches `onMessage`. */ subscribe(channel: string, onMessage: OnMessage): Promise<Unsubscribe>; /** Stops every subscription and frees the backend's connections. Later calls throw a `closed` error. */ close(): Promise<void>; };",
+      "jsdocSummary": "Publish and subscribe on named channels."
+    },
+    {
+      "subpath": ".",
+      "name": "PUBSUB_ERROR_CODES",
+      "kind": "variable",
+      "signature": "export declare const PUBSUB_ERROR_CODES: { /** * The channel is not 1 to 63 characters of `[a-z0-9_]` (a Postgres identifier). * * @fix Use a short lower-case name such as `orders_changed`. * @verify bun run test -- src/testing/memory.contract.test.ts */ readonly channel: 'ARKI_PUBSUB_E001'; /** * The payload is 8000 bytes or more in UTF-8 (NOTIFY refuses it; the limit is 7999). * * @fix Send an id and let the subscriber read the rest from the database. * @verify bun run test -- src/testing/memory.contract.test.ts */ readonly payload: 'ARKI_PUBSUB_E002'; /** * The pubsub was closed; it cannot publish or subscribe any more. * * @fix Make a new pubsub, or close it only when the app shuts down. * @verify bun run test -- src/testing/memory.contract.test.ts */ readonly closed: 'ARKI_PUBSUB_E003'; /** * Bad setup: a non-positive `intervalMs` or `retainMs`. * * @fix Fix the option named in the message. * @verify bun run test -- src/sqlite/sqlite.test.ts */ readonly config: 'ARKI_PUBSUB_E004'; };",
+      "jsdocSummary": "Stable ids, one per `PubSubError.code`. Never renumber."
+    },
+    {
+      "subpath": ".",
+      "name": "PubSubError",
+      "kind": "class",
+      "signature": "export declare class PubSubError extends Error { readonly code: PubSubErrorCode; /** The stable id of `code`, e.g. `ARKI_PUBSUB_E001`. */ readonly errorCode: (typeof PUBSUB_ERROR_CODES)[PubSubErrorCode]; /** What to do about it, in one sentence. */ readonly remediation: string; constructor(init: { readonly code: PubSubErrorCode; readonly message: string; readonly remediation: string; }); }",
+      "jsdocSummary": "A thrown, coded error of `@arki/pubsub`: a bad call or a closed pubsub."
+    },
+    {
+      "subpath": ".",
+      "name": "PubSubErrorCode",
+      "kind": "type",
+      "signature": "export type PubSubErrorCode = keyof typeof PUBSUB_ERROR_CODES;",
+      "jsdocSummary": "Which failure a {@link PubSubError} is."
+    },
+    {
+      "subpath": ".",
+      "name": "TransactionalPubSub",
+      "kind": "type",
+      "signature": "export type TransactionalPubSub<Tx> = PubSub & { /** Sent when `tx` commits; dropped if it rolls back. */ publishIn(tx: Tx, channel: string, payload: string): Promise<void>; };",
+      "jsdocSummary": "A {@link PubSub} that can also publish inside the writer's own database transaction."
+    },
+    {
+      "subpath": ".",
+      "name": "Unsubscribe",
+      "kind": "type",
+      "signature": "export type Unsubscribe = () => Promise<void>;",
+      "jsdocSummary": "Stops one subscription. Calling it again does nothing. Its shape fits `@arki/journal`'s `WakeListener`, so `listen: fn => pubsub.subscribe(channel, fn)` needs no adapter."
+    },
+    {
+      "subpath": "./memory",
+      "name": "memoryPubSub",
+      "kind": "function",
+      "signature": "export declare function memoryPubSub(): PubSub;",
+      "jsdocSummary": "A pubsub inside this process. Each call makes its own, separate bus. Messages arrive on a later microtask, never inside `publish`, in the order they were published."
+    },
+    {
+      "subpath": "./pg",
+      "name": "pgPubSub",
+      "kind": "function",
+      "signature": "export declare function pgPubSub(options: PgPubSubOptions): TransactionalPubSub<PgTransaction>;",
+      "jsdocSummary": "A pubsub over Postgres LISTEN/NOTIFY."
+    },
+    {
+      "subpath": "./pg",
+      "name": "PgPubSubOptions",
+      "kind": "type",
+      "signature": "export type PgPubSubOptions = { /** A session pool on the direct host, never a transaction pooler. Not closed by `close()`. */ readonly pool: PgPubSubPool; /** Reconnect and health-check timing of the listen clients. */ readonly listen?: ListenOptions; };",
+      "jsdocSummary": ""
+    },
+    {
+      "subpath": "./pg",
+      "name": "PgPubSubPool",
+      "kind": "type",
+      "signature": "export type PgPubSubPool = ListenPool & { query(text: string, values: unknown[]): Promise<unknown>; };",
+      "jsdocSummary": "A `pg` pool (`new pg.Pool(...)`, or a Drizzle node-postgres database's `$client`): it hands out listen clients and runs `pg_notify`."
+    },
+    {
+      "subpath": "./pg",
+      "name": "PgTransaction",
+      "kind": "type",
+      "signature": "export type PgTransaction = PgAsyncTransaction<PgQueryResultHKT, AnyRelations>;",
+      "jsdocSummary": "Any Drizzle Postgres transaction (node-postgres, postgres.js, PGlite, …)."
+    },
+    {
+      "subpath": "./redis",
+      "name": "redisPubSub",
+      "kind": "function",
+      "signature": "export declare function redisPubSub(options: RedisPubSubOptions): PubSub;",
+      "jsdocSummary": "A pubsub over Redis pub/sub."
+    },
+    {
+      "subpath": "./redis",
+      "name": "RedisPubSubOptions",
+      "kind": "type",
+      "signature": "export type RedisPubSubOptions = { /** An ioredis client. It publishes; a duplicate of it subscribes. `close()` closes only the duplicate. */ readonly client: Redis; };",
+      "jsdocSummary": ""
+    },
+    {
+      "subpath": "./sqlite",
+      "name": "pubsubTable",
+      "kind": "function",
+      "signature": "export declare function pubsubTable(name?: string): import(\"drizzle-orm/sqlite-core\").SQLiteTableWithColumns<{ name: string; schema: undefined; columns: { id: import(\"drizzle-orm/sqlite-core\").SQLiteColumn<{ name: string; tableName: string; dataType: \"number int53\"; data: number; driverParam: number; notNull: true; hasDefault: true; isPrimaryKey: true; isAutoincrement: false; hasRuntimeDefault: false; enumValues: undefined; baseColumn: never; identity: undefined; generated: undefined; }, {}>; channel: import(\"drizzle-orm/sqlite-core\").SQLiteColumn<{ name: string; tableName: string; dataType: \"string\"; data: string; driverParam: string; notNull: true; hasDefault: false; isPrimaryKey: false; isAutoincrement: false; hasRuntimeDefault: false; enumValues: [string, ...string[]]; baseColumn: never; identity: undefined; generated: undefined; }, {}>; payload: import(\"drizzle-orm/sqlite-core\").SQLiteColumn<{ name: string; tableName: string; dataType: \"string\"; data: string; driverParam: string; notNull: true; hasDefault: false; isPrimaryKey: false; isAutoincrement: false; hasRuntimeDefault: false; enumValues: [string, ...string[]]; baseColumn: never; identity: undefined; generated: undefined; }, {}>; createdAt: import(\"drizzle-orm/sqlite-core\").SQLiteColumn<{ name: string; tableName: string; dataType: \"object date\"; data: Date; driverParam: number; notNull: true; hasDefault: true; isPrimaryKey: false; isAutoincrement: false; hasRuntimeDefault: false; enumValues: undefined; baseColumn: never; identity: undefined; generated: undefined; }, {}>; }; dialect: 'sqlite'; }>;",
+      "jsdocSummary": "The messages table: `id` (auto-increment, the subscribers' cursor), `channel`, `payload` and `createdAt` (the database clock, used for retention). Export it from your schema so your migrations create it."
+    },
+    {
+      "subpath": "./sqlite",
+      "name": "PubsubTable",
+      "kind": "type",
+      "signature": "export type PubsubTable = ReturnType<typeof pubsubTable>;",
+      "jsdocSummary": "The table {@link pubsubTable} builds."
+    },
+    {
+      "subpath": "./sqlite",
+      "name": "sqlitePubSub",
+      "kind": "function",
+      "signature": "export declare function sqlitePubSub<TDb extends SqlitePubSubDb>(options: SqlitePubSubOptions<TDb>): TransactionalPubSub<TransactionOf<TDb>>;",
+      "jsdocSummary": "A pubsub over a SQLite message table. Each subscriber starts at the newest row when it subscribes; one loop per pubsub reads `id > cursor` for the subscribed channels every `intervalMs`. `publishIn(tx, …)` inserts the row in your transaction: it is seen at commit and never if the transaction rolls back. SQLite has one writer, so ids commit in order and no row is skipped."
+    },
+    {
+      "subpath": "./sqlite",
+      "name": "SqlitePubSubDb",
+      "kind": "type",
+      "signature": "export type SqlitePubSubDb = SQLiteAsyncDatabase<'async', unknown, AnyRelations>;",
+      "jsdocSummary": "Any async Drizzle SQLite database or transaction; libSQL is the one `@arki/db` supports."
+    },
+    {
+      "subpath": "./sqlite",
+      "name": "SqlitePubSubOptions",
+      "kind": "type",
+      "signature": "export type SqlitePubSubOptions<TDb> = { /** The Drizzle database the table lives in. Subscribers read through it; `publish` writes through it. */ readonly db: TDb; /** The table from `pubsubTable()`. Default: `pubsubTable()`, named `arki_pubsub`. */ readonly table?: PubsubTable; /** How often subscribers read new rows, in milliseconds. Default 250. */ readonly intervalMs?: number; /** Rows older than this many milliseconds are deleted by the next publisher. Default 60000. */ readonly retainMs?: number; };",
+      "jsdocSummary": ""
+    },
+    {
+      "subpath": "./testing",
+      "name": "describePubSubContract",
+      "kind": "function",
+      "signature": "export declare function describePubSubContract<Tx>(name: string, make: () => Promise<PubSubSubject | TransactionalPubSubSubject<Tx>>, options?: PubSubContractOptions): void;",
+      "jsdocSummary": "Register the conformance cases with vitest. `make` returns a fresh pubsub per case; return `{ pubsub, transaction }` for a backend with `publishIn` to run the transaction cases too."
+    },
+    {
+      "subpath": "./testing",
+      "name": "PubSubContractOptions",
+      "kind": "type",
+      "signature": "export type PubSubContractOptions = { /** How long to wait before saying nothing arrived. Default 150 ms; a polling backend needs a few intervals. */ readonly settleMs?: number; /** How long to wait for a message that must arrive. Default 5000 ms. */ readonly timeoutMs?: number; /** True when two `make()` results share one transport (a database or a server), so one hears the other. Default true. */ readonly shared?: boolean; };",
+      "jsdocSummary": ""
+    },
+    {
+      "subpath": "./testing",
+      "name": "PubSubSubject",
+      "kind": "type",
+      "signature": "export type PubSubSubject = { readonly pubsub: PubSub; };",
+      "jsdocSummary": "A fresh pubsub for one case. The suite closes it."
+    },
+    {
+      "subpath": "./testing",
+      "name": "TransactionalPubSubSubject",
+      "kind": "type",
+      "signature": "export type TransactionalPubSubSubject<Tx> = { readonly pubsub: TransactionalPubSub<Tx>; /** Runs `fn` in one transaction: commits when it resolves, rolls back when it throws. Usually `fn => db.transaction(fn)`. */ readonly transaction: (fn: (tx: Tx) => Promise<void>) => Promise<void>; };",
+      "jsdocSummary": "A fresh transactional pubsub for one case, with a way to open a transaction it can publish in."
+    }
+  ],
+  "groups": [],
+  "errorCodes": [
+    "ARKI_PUBSUB_E001",
+    "ARKI_PUBSUB_E002",
+    "ARKI_PUBSUB_E003",
+    "ARKI_PUBSUB_E004"
+  ]
+}
