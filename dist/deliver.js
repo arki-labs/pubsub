@@ -1,4 +1,5 @@
 import { getLogger } from '@arki/log';
+import { observeDelivery } from './telemetry.js';
 const log = getLogger('arki:pubsub');
 function warnThrown(channel, error) {
     log.warn('a subscriber on {channel} threw: {message}', {
@@ -7,18 +8,12 @@ function warnThrown(channel, error) {
     });
 }
 /**
- * Hands one message to one subscriber. A subscriber that throws, or returns a promise that rejects
- * (an `async` callback is accepted where `OnMessage` returns `void`), is logged at warn and never
- * reaches the other subscribers or becomes an unhandled rejection.
+ * Hands one message to one subscriber, in a `pubsub.deliver` span. A subscriber that throws, or
+ * returns a promise that rejects (an `async` callback is accepted where `OnMessage` returns
+ * `void`), is logged at warn and never reaches the other subscribers or becomes an unhandled
+ * rejection.
  */
-export function deliver(channel, onMessage, payload) {
-    try {
-        const result = onMessage(payload);
-        if (result instanceof Promise)
-            result.catch((error) => warnThrown(channel, error));
-    }
-    catch (error) {
-        warnThrown(channel, error);
-    }
+export function deliver(backend, channel, onMessage, payload) {
+    observeDelivery(backend, () => onMessage(payload), error => warnThrown(channel, error));
 }
 //# sourceMappingURL=deliver.js.map

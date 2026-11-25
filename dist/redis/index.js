@@ -1,6 +1,7 @@
 import { getLogger } from '@arki/log';
 import { deliver } from '../deliver.js';
 import { checkChannel, checkMessage, checkOpen } from '../limits.js';
+import { observePublish } from '../telemetry.js';
 const log = getLogger('arki:pubsub');
 /** A pubsub over Redis pub/sub. */
 export function redisPubSub(options) {
@@ -15,7 +16,7 @@ export function redisPubSub(options) {
         const created = client.duplicate();
         created.on('message', (name, payload) => {
             for (const callback of channels.get(name)?.callbacks ?? []) {
-                deliver(name, callback, payload);
+                deliver('redis', name, callback, payload);
             }
         });
         created.on('error', (error) => {
@@ -27,9 +28,11 @@ export function redisPubSub(options) {
     }
     return {
         async publish(channel, payload) {
-            checkOpen(closed, 'redis');
-            checkMessage(channel, payload);
-            await client.publish(channel, payload);
+            await observePublish('publish', 'redis', async () => {
+                checkOpen(closed, 'redis');
+                checkMessage(channel, payload);
+                await client.publish(channel, payload);
+            });
         },
         async subscribe(name, onMessage) {
             checkOpen(closed, 'redis');

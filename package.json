@@ -1,6 +1,6 @@
 {
   "name": "@arki/pubsub",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Publish and subscribe with one contract and a dedicated integration per backend: memory, Postgres LISTEN/NOTIFY, SQLite (a polled table) and Redis.",
   "license": "MIT",
   "repository": {
@@ -70,11 +70,12 @@
     "package.json"
   ],
   "dependencies": {
-    "@arki/log": "0.4.0",
+    "@arki/log": "0.4.1",
+    "@opentelemetry/api": "^1.9.1",
     "zod": "4.6.5"
   },
   "peerDependencies": {
-    "@arki/db": "^0.5.1",
+    "@arki/db": "^0.6.0",
     "drizzle-orm": "^1.0.0-rc.4",
     "ioredis": "^5.11.1",
     "vitest": "^5.0.3"

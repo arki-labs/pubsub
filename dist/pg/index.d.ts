@@ -13,6 +13,7 @@
 import type { AnyRelations } from 'drizzle-orm';
 import type { PgAsyncTransaction, PgQueryResultHKT } from 'drizzle-orm/pg-core';
 import type { ListenOptions, ListenPool } from '@arki/db/pg';
+import { ListenUnavailable } from '@arki/db/pg';
 import type { TransactionalPubSub } from '../types.js';
 /** A `pg` pool (`new pg.Pool(...)`, or a Drizzle node-postgres database's `$client`): it hands out listen clients and runs `pg_notify`. */
 export type PgPubSubPool = ListenPool & {
@@ -26,6 +27,9 @@ export type PgPubSubOptions = {
     /** Reconnect and health-check timing of the listen clients. */
     readonly listen?: ListenOptions;
 };
-/** A pubsub over Postgres LISTEN/NOTIFY. */
-export declare function pgPubSub(options: PgPubSubOptions): TransactionalPubSub<PgTransaction>;
+/**
+ * A pubsub over Postgres LISTEN/NOTIFY. `subscribe` resolves to `db.listen_unavailable`
+ * (`ListenUnavailable` from `@arki/db/pg`) when the channel's first connection or `LISTEN` fails.
+ */
+export declare function pgPubSub(options: PgPubSubOptions): TransactionalPubSub<PgTransaction, ReturnType<typeof ListenUnavailable>>;
 //# sourceMappingURL=index.d.ts.map

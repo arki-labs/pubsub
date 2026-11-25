@@ -1,10 +1,14 @@
 import { sql } from 'drizzle-orm';
-import { listenOnPool } from '@arki/db/pg';
+import { listenOnPool, ListenUnavailable } from '@arki/db/pg';
 import { getLogger } from '@arki/log';
 import { deliver } from '../deliver.js';
 import { checkChannel, checkMessage, checkOpen } from '../limits.js';
+import { observePublish } from '../telemetry.js';
 const log = getLogger('arki:pubsub');
-/** A pubsub over Postgres LISTEN/NOTIFY. */
+/**
+ * A pubsub over Postgres LISTEN/NOTIFY. `subscribe` resolves to `db.listen_unavailable`
+ * (`ListenUnavailable` from `@arki/db/pg`) when the channel's first connection or `LISTEN` fails.
+ */
 export function pgPubSub(options) {
     const { pool } = options;
     const channels = new Map();
@@ -19,18 +23,25 @@ export function pgPubSub(options) {
         catch {
             return; // The listen never started (its subscriber got the error), so nothing to stop.
         }
+        // The listen never started (its subscribers got the failure), so nothing to stop.
+        if (ListenUnavailable.is(unlisten))
+            return;
         await unlisten();
     }
     return {
         async publish(channel, payload) {
-            checkOpen(closed, 'pg');
-            checkMessage(channel, payload);
-            await pool.query('select pg_notify($1, $2)', [channel, payload]);
+            await observePublish('publish', 'pg', async () => {
+                checkOpen(closed, 'pg');
+                checkMessage(channel, payload);
+                await pool.query('select pg_notify($1, $2)', [channel, payload]);
+            });
         },
         async publishIn(tx, channel, payload) {
-            checkOpen(closed, 'pg');
-            checkMessage(channel, payload);
-            await tx.execute(sql `select pg_notify(${channel}, ${payload})`);
+            await observePublish('publish_in', 'pg', async () => {
+                checkOpen(closed, 'pg');
+                checkMessage(channel, payload);
+                await tx.execute(sql `select pg_notify(${channel}, ${payload})`);
+            });
         },
         async subscribe(name, onMessage) {
             checkOpen(closed, 'pg');
@@ -41,7 +52,7 @@ export function pgPubSub(options) {
                 const callbacks = new Set();
                 const listening = listenOnPool(pool, name, options.listen)(payload => {
                     for (const callback of callbacks) {
-                        deliver(name, callback, payload);
+                        deliver('pg', name, callback, payload);
                     }
                 });
                 channel = { callbacks, listening };
@@ -55,12 +66,18 @@ export function pgPubSub(options) {
                     return;
                 await stop(name, channel);
             };
+            let listened;
             try {
-                await channel.listening;
+                listened = await channel.listening;
             }
             catch (error) {
                 await leave();
                 throw error;
+            }
+            if (ListenUnavailable.is(listened)) {
+                log.debug('{channel}: the listener could not start', { channel: name });
+                await leave();
+                return listened;
             }
             return leave;
         },

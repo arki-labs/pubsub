@@ -15,12 +15,13 @@ import type { PgAsyncTransaction, PgQueryResultHKT } from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
 
 import type { ListenOptions, ListenPool } from '@arki/db/pg';
-import { listenOnPool } from '@arki/db/pg';
+import { listenOnPool, ListenUnavailable } from '@arki/db/pg';
 import { getLogger } from '@arki/log';
 
 import type { OnMessage, TransactionalPubSub } from '../types.js';
 import { deliver } from '../deliver.js';
 import { checkChannel, checkMessage, checkOpen } from '../limits.js';
+import { observePublish } from '../telemetry.js';
 
 const log = getLogger('arki:pubsub');
 
@@ -37,36 +38,50 @@ export type PgPubSubOptions = {
   readonly listen?: ListenOptions;
 };
 
-/** One heard channel: its callbacks, and the listen that resolves with the function that stops it. */
-type Channel = { readonly callbacks: Set<OnMessage>; readonly listening: Promise<() => Promise<void>> };
+/** One heard channel: its callbacks, and the listen that resolves with the function that stops it (or its failure). */
+type Channel = {
+  readonly callbacks: Set<OnMessage>;
+  readonly listening: ReturnType<ReturnType<typeof listenOnPool>>;
+};
 
-/** A pubsub over Postgres LISTEN/NOTIFY. */
-export function pgPubSub(options: PgPubSubOptions): TransactionalPubSub<PgTransaction> {
+/**
+ * A pubsub over Postgres LISTEN/NOTIFY. `subscribe` resolves to `db.listen_unavailable`
+ * (`ListenUnavailable` from `@arki/db/pg`) when the channel's first connection or `LISTEN` fails.
+ */
+export function pgPubSub(
+  options: PgPubSubOptions,
+): TransactionalPubSub<PgTransaction, ReturnType<typeof ListenUnavailable>> {
   const { pool } = options;
   const channels = new Map<string, Channel>();
   let closed = false;
 
   async function stop(name: string, channel: Channel): Promise<void> {
     if (channels.get(name) === channel) channels.delete(name);
-    let unlisten: () => Promise<void>;
+    let unlisten: Awaited<Channel['listening']>;
     try {
       unlisten = await channel.listening;
     } catch {
       return; // The listen never started (its subscriber got the error), so nothing to stop.
     }
+    // The listen never started (its subscribers got the failure), so nothing to stop.
+    if (ListenUnavailable.is(unlisten)) return;
     await unlisten();
   }
 
   return {
     async publish(channel, payload) {
-      checkOpen(closed, 'pg');
-      checkMessage(channel, payload);
-      await pool.query('select pg_notify($1, $2)', [channel, payload]);
+      await observePublish('publish', 'pg', async () => {
+        checkOpen(closed, 'pg');
+        checkMessage(channel, payload);
+        await pool.query('select pg_notify($1, $2)', [channel, payload]);
+      });
     },
     async publishIn(tx, channel, payload) {
-      checkOpen(closed, 'pg');
-      checkMessage(channel, payload);
-      await tx.execute(sql`select pg_notify(${channel}, ${payload})`);
+      await observePublish('publish_in', 'pg', async () => {
+        checkOpen(closed, 'pg');
+        checkMessage(channel, payload);
+        await tx.execute(sql`select pg_notify(${channel}, ${payload})`);
+      });
     },
     async subscribe(name, onMessage) {
       checkOpen(closed, 'pg');
@@ -81,7 +96,7 @@ export function pgPubSub(options: PgPubSubOptions): TransactionalPubSub<PgTransa
           options.listen,
         )(payload => {
           for (const callback of callbacks) {
-            deliver(name, callback, payload);
+            deliver('pg', name, callback, payload);
           }
         });
         channel = { callbacks, listening };
@@ -94,11 +109,17 @@ export function pgPubSub(options: PgPubSubOptions): TransactionalPubSub<PgTransa
         if (!channel.callbacks.delete(subscription) || channel.callbacks.size > 0) return;
         await stop(name, channel);
       };
+      let listened: Awaited<Channel['listening']>;
       try {
-        await channel.listening;
+        listened = await channel.listening;
       } catch (error) {
         await leave();
         throw error;
+      }
+      if (ListenUnavailable.is(listened)) {
+        log.debug('{channel}: the listener could not start', { channel: name });
+        await leave();
+        return listened;
       }
       return leave;
     },
